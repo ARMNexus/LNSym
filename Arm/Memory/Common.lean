@@ -290,6 +290,7 @@ def omega (bvToNatSimpCtx : Simp.Context) (bvToNatSimprocs : Array Simp.Simprocs
     TacticM.withTraceNode' m!"goal post `bv_toNat` reductions (Note: can be large)" do
       trace[simp_mem.info] "{goal}"
     -- @bollu: TODO: understand what precisely we are recovering from.
+    -- | TODO: replace with bvOmegaBench, and make THAT work in TacticM.
     withoutRecover do
       evalTactic (← `(tactic| bv_omega_bench))
 
