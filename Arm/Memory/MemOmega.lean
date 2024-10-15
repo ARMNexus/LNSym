@@ -39,6 +39,11 @@ inductive UserHyp
 | expr : Expr → UserHyp
 
 namespace UserHyp
+def ofExpr (e : Expr) : UserHyp := 
+  if e.isFVar then
+    .hyp e.fvarId!
+  else 
+    .expr e
 end UserHyp
 
 
@@ -179,7 +184,6 @@ syntax (name := mem_omega_bang) "mem_omega!" (memOmegaWith)?  : tactic
 --   TSyntax.mk t.raw
   
 
-  
 /--
 build a `UserHyp` from the raw syntax.
 This supports using fars, using CDot notation to partially apply theorems, and to use terms.
