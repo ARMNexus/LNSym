@@ -120,28 +120,15 @@ def mkGoalWithOnlyUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : M
   | none => pure g
   | some userHyps => do
     g.withContext do 
-      let tag ← g.getTag
       let mut keepHyps : Std.HashSet FVarId ← userHyps.foldlM
         (init := ∅)
         (mkKeepHypsOfUserHyp g)
       let mut eraseHyps : Std.HashSet FVarId := Std.HashSet.ofList (← g.getNondepPropHyps).toList
       for h in keepHyps do eraseHyps := eraseHyps.erase h
-
-      -- modeled after `clear`'s implementation
-      let mut lctx ← getLCtx
-      -- remove anything that needs a keepHyp
-      let gDecl ← g.getDecl
-
-      for hyp in eraseHyps do
-        let keep? ← findLocalDeclDependsOn (lctx.get! hyp) (fun fvar => fvar ∈ keepHyps)
-        if keep? then eraseHyps := eraseHyps.erase hyp
-
-      for hyp in eraseHyps do 
-        if (← exprDependsOn gDecl.type hyp) then throwError m!"target depends on '{mkFVar hyp}'"
-        lctx := lctx.erase hyp
-      let g' ← mkFreshExprMVarAt lctx (← getLocalInstances) gDecl.type MetavarKind.syntheticOpaque tag
-      g.assign g'
-      return g'.mvarId!
+      let mut g := g
+      for h in eraseHyps do 
+        g ← g.withContext <| g.clear h
+      return g
 
 def memOmega (g : MVarId) : MemOmegaM Unit := do
     let g ← mkGoalWithOnlyUserHyps g (← readThe Context).userHyps? 
