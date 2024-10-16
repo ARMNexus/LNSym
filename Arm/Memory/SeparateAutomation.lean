@@ -393,7 +393,6 @@ partial def SimpMemM.simpifyLoopUnsupervised : SimpMemM Unit := do
         throwError "{crossEmoji} simp_mem failed to make any progress."
 
 
-
 /-- Make this an auxiliary definition because lean was taking way too long inferring this typeclass -/
 private def Meta.logWarning (msgData : Lean.MessageData) : MetaM Unit := Lean.logWarning msgData
 
@@ -452,6 +451,7 @@ def SimpMemM.simplifySupervisedCore (g : MVarId) (e : Expr) (guidance : Guidance
           -- -- Add it into the set of user provided hypotheses.
           |  (.some userHyps, .some readHyp) => .some <| userHyps.push (MemOmega.UserHyp.ofExpr readHyp)
         let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g userHyps?
+        withContext g do
           let hyps ← SimpMemM.findMemoryHyps g
           match hread? with
           | .none => do 

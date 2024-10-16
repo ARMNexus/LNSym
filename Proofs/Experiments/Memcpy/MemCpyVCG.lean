@@ -465,7 +465,7 @@ theorem Memcpy.extracted_2 (s0 si : ArmState)
         (Memory.read_bytes 16 (s0.x1 + 0x10#64 * (s0.x0 - si.x0)) si.mem) si.mem) =
     Memory.read_bytes n addr s0.mem := by
   have h_width_lt : (0x10#64).toNat * (s0.x0 - (si.x0 - 0x1#64)).toNat < 2 ^ 64 := by 
-    mem_omega with [h_assert_1, h_pre_1]
+    mem_omega with  [h_s0_x1, h_assert_1, h_pre_1]
   rw [Memory.read_bytes_write_bytes_eq_read_bytes_of_mem_separate']
   · rw [h_assert_6]
     skip_proof mem_omega with [h_assert_1, h_pre_1, hsep]
