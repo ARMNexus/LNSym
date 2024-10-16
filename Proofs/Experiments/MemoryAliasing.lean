@@ -170,6 +170,7 @@ set_option linter.all false in
   mem_omega
 
 set_option linter.all false in
+set_option trace.simp_mem.info true in
 #time theorem mem_separate_11  (h : mem_separate' a 100 b 100)
   (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1)
   (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1) (h' : a < b + 1)
@@ -208,9 +209,8 @@ section HypothesisSelectors
 set_option linter.all false in
 set_option trace.simp_mem.info true in
 /--
-info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
+info: [simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
 [simp_mem.info] ⚙️ Processing 'h'' : 'a ≤ 100'
-[simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
 [simp_mem.info] ⚙️ Matching on ⊢ a ≤ a + 1
 [simp_mem.info] Adding omega facts from hypotheses
 [simp_mem.info] Reducion to omega
@@ -226,9 +226,7 @@ info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
   mem_omega  -- by default, process all hyps
 
 /--
-info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
-[simp_mem.info] ⚙️ Processing 'h'' : 'a ≤ 100'
-[simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
+info: [simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
 [simp_mem.info] ⚙️ Matching on ⊢ a ≤ a + 1
 [simp_mem.info] Adding omega facts from hypotheses
 [simp_mem.info] Reducion to omega
@@ -249,9 +247,7 @@ example (h' : a ≤ 100) (hab : a ≤ a + 1) : a ≤ a + 1 := by
 warning: unused variable `hab`
 note: this linter can be disabled with `set_option linter.unusedVariables false`
 ---
-info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
-[simp_mem.info] ⚙️ Processing 'h'' : 'a ≤ 100'
-[simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
+info: [simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
 [simp_mem.info] ⚙️ Matching on ⊢ a ≤ a + 1
 [simp_mem.info] Adding omega facts from hypotheses
 [simp_mem.info] Reducion to omega
@@ -345,7 +341,8 @@ theorem mem_automation_test_2_conv_focus
   simp only [memory_rules]
   conv =>
     lhs 
-    simp_mem sep with [h_n0, h_no_wrap_src_region, h_no_wrap_dest_region, h_s0_src_dest_separate]
+    simp_mem sep with [h_s0_src_dest_separate]
+
 
 /-- info: 'mem_automation_test_2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms mem_automation_test_2
@@ -379,7 +376,7 @@ theorem mem_automation_test_3_conv
   simp only [memory_rules]
   conv =>
     lhs
-    simp_mem sep with [*]
+    simp_mem sep with [h_s0_src_ignore_disjoint]
 
 /-- info: 'mem_automation_test_3' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms mem_automation_test_3

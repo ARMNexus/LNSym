@@ -816,32 +816,6 @@ def proveWithOmega?  {α : Type} [ToMessageData α] [OmegaReducible α] (e : α)
 def _root_.Lean.MVarId.getNondepPropExprs (g : MVarId) : MetaM (Array Expr) := do
   return ((← g.getNondepPropHyps).map Expr.fvar)
 
-/--
-simplify the goal state, closing legality, subset, and separation goals,
-and simplifying all other expressions. return `true` if goal has been closed, and `false` otherwise.
--/
-partial def closeMemSideCondition (g : MVarId)
-    (bvToNatSimpCtx : Simp.Context) (bvToNatSimprocs : Array Simp.Simprocs)
-    (hyps : Array Memory.Hypothesis) : MetaM Bool := do
-  -- TODO: take user selected hyps.
-  g.withContext do
-    trace[simp_mem.info] "{processingEmoji} Matching on ⊢ {← g.getType}"
-    let gt ← g.getType
-    if let .some e := MemLegalProp.ofExpr? gt then
-      TacticM.withTraceNode' m!"Matched on ⊢ {e}. Proving..." do
-        if let .some proof ← proveWithOmega? e  (← g.getNondepPropExprs) bvToNatSimpCtx bvToNatSimprocs hyps then
-          g.assign proof.h
-    if let .some e := MemSubsetProp.ofExpr? gt then
-      TacticM.withTraceNode' m!"Matched on ⊢ {e}. Proving..." do
-        if let .some proof ← proveWithOmega? e (← g.getNondepPropExprs)  bvToNatSimpCtx bvToNatSimprocs hyps then
-          g.assign proof.h
-    if let .some e := MemSeparateProp.ofExpr? gt then
-      TacticM.withTraceNode' m!"Matched on ⊢ {e}. Proving..." do
-        if let .some proof ← proveWithOmega? e (← g.getNondepPropExprs)  bvToNatSimpCtx bvToNatSimprocs hyps then
-          g.assign proof.h
-  return ← g.isAssigned
-
-
 
 
 

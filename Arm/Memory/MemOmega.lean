@@ -93,6 +93,33 @@ namespace MemOmegaM
   def run (ctx : Context) (x : MemOmegaM α) : MetaM α := ReaderT.run x ctx
 end MemOmegaM
 
+/--
+simplify the goal state, closing legality, subset, and separation goals,
+and simplifying all other expressions. return `true` if goal has been closed, and `false` otherwise.
+-/
+private def closeMemSideCondition (g : MVarId) (extraHyps : Array Expr)
+    (bvToNatSimpCtx : Simp.Context) (bvToNatSimprocs : Array Simp.Simprocs)
+    (hyps : Array Memory.Hypothesis) : MetaM Bool := do
+  -- TODO: take user selected hyps.
+  g.withContext do
+    trace[simp_mem.info] "{processingEmoji} Matching on ⊢ {← g.getType}"
+    let gt ← g.getType
+    if let .some e := MemLegalProp.ofExpr? gt then
+      TacticM.withTraceNode' m!"Matched on ⊢ {e}. Proving..." do
+        if let .some proof ← proveWithOmega? e  extraHyps bvToNatSimpCtx bvToNatSimprocs hyps then
+          g.assign proof.h
+    if let .some e := MemSubsetProp.ofExpr? gt then
+      TacticM.withTraceNode' m!"Matched on ⊢ {e}. Proving..." do
+        if let .some proof ← proveWithOmega? e extraHyps  bvToNatSimpCtx bvToNatSimprocs hyps then
+          g.assign proof.h
+    if let .some e := MemSeparateProp.ofExpr? gt then
+      TacticM.withTraceNode' m!"Matched on ⊢ {e}. Proving..." do
+        if let .some proof ← proveWithOmega? e extraHyps bvToNatSimpCtx bvToNatSimprocs hyps then
+          g.assign proof.h
+  return ← g.isAssigned
+
+
+
 /-- Modify the set of hypotheses `hyp` based on the user hyp `hyp`. -/
 def mkKeepHypsOfUserHyp (g : MVarId) (set : Std.HashSet FVarId) (hyp : UserHyp) : MetaM <| Std.HashSet FVarId :=
   match hyp with 
@@ -107,8 +134,10 @@ def mkKeepHypsOfUserHyp (g : MVarId) (set : Std.HashSet FVarId) (hyp : UserHyp) 
 Fold over the array of `UserHyps`, build tracking `FVarId`s for the ones that we use.
 if the array is `.none`, then we keep everything. 
 -/
-def mkKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : MetaM <| Std.HashSet FVarId :=
-  (userHyps?.getD #[]).foldlM (init := ∅) (MemOmega.mkKeepHypsOfUserHyp g)
+private def mkKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : MetaM <| Std.HashSet FVarId :=
+  match userHyps? with
+  | none => return Std.HashSet.ofList (← g.getNondepPropHyps).toList
+  | some hyps => hyps.foldlM (init := ∅) (MemOmega.mkKeepHypsOfUserHyp g)
 
 /-- Fold over the array of `UserHyps`, build tracking `FVarId`s for the ones that we use.
 if the array is `.none`, then we keep everything. 
@@ -127,23 +156,20 @@ def mkMemoryAndKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHy
         -- size did not change, so that was a non memory hyp.
         nonmem := nonmem.push h
     return (foundHyps, nonmem)
-  
-  
 
-def memOmega (g : MVarId) : MemOmegaM Unit := do
+  
+private def Bool.implies (p q : Bool) : Bool := !p || q
+
+def memOmega (g : MVarId) (userHyps? : Option (Array UserHyp)) : MemOmegaM Unit := do
     g.withContext do
-      let rawHyps ← getLocalHyps
-      let mut hyps := #[]
-      -- extract out structed values for all hyps.
-      for h in rawHyps do
-        hyps ← hypothesisOfExpr h hyps
+      let (hyps, extraHyps) ← mkMemoryAndKeepHypsOfUserHyps g userHyps?
 
       -- only enable pairwise constraints if it is enabled.
       let isPairwiseEnabled := (← readThe Context).cfg.explodePairwiseSeparate
-      hyps := hyps.filter (!·.isPairwiseSeparate || isPairwiseEnabled)
+      let hyps := hyps.filter (fun hyp => Bool.implies hyp.isPairwiseSeparate isPairwiseEnabled)
 
       -- used specialized procedure that doesn't unfold everything for the easy case.
-      if ← closeMemSideCondition g (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs hyps then
+      if ← closeMemSideCondition g (extraHyps.map .fvar) (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs hyps then
         return ()
       else
         -- in the bad case, just rip through everything.
@@ -152,34 +178,7 @@ def memOmega (g : MVarId) : MemOmegaM Unit := do
         TacticM.withTraceNode' m!"Reducion to omega" do
           try
             TacticM.traceLargeMsg m!"goal (Note: can be large)"  m!"{g}"
-            omega g ((← g.getNondepPropHyps).map Expr.fvar) (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs
-            trace[simp_mem.info] "{checkEmoji} `omega` succeeded."
-          catch e =>
-            trace[simp_mem.info]  "{crossEmoji} `omega` failed with error:\n{e.toMessageData}"
-            throw e
-
-def memOmegaWithHyps (g : MVarId) (rawHyps : Array FVarId) : MemOmegaM Unit := do
-    g.withContext do
-      let mut hyps := #[]
-      -- extract out structed values for all hyps.
-      for h in rawHyps do
-        hyps ← hypothesisOfExpr (.fvar h) hyps
-
-      -- only enable pairwise constraints if it is enabled.
-      let isPairwiseEnabled := (← readThe Context).cfg.explodePairwiseSeparate
-      hyps := hyps.filter (!·.isPairwiseSeparate || isPairwiseEnabled)
-
-      -- used specialized procedure that doesn't unfold everything for the easy case.
-      if ← closeMemSideCondition g (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs hyps then
-        return ()
-      else
-        -- in the bad case, just rip through everything.
-        let (_, g) ← Hypothesis.addOmegaFactsOfHyps g hyps.toList #[]
-
-        TacticM.withTraceNode' m!"Reducion to omega" do
-          try
-            TacticM.traceLargeMsg m!"goal (Note: can be large)"  m!"{g}"
-            omega g (← getLCtx).getFVars (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs
+            omega g (extraHyps.map .fvar) (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs
             trace[simp_mem.info] "{checkEmoji} `omega` succeeded."
           catch e =>
             trace[simp_mem.info]  "{crossEmoji} `omega` failed with error:\n{e.toMessageData}"
@@ -204,7 +203,7 @@ syntax (name := mem_omega) "mem_omega" (Lean.Parser.Tactic.config)? (memOmegaWit
 /--
 Implement the `mem_omega` tactic frontend.
 -/
-syntax (name := mem_omega_bang) "mem_omega!" (memOmegaWith)?  : tactic
+syntax (name := mem_omega_bang) "mem_omega!" (Lean.Parser.Tactic.config)? (memOmegaWith)?  : tactic
 
 -- /-- Since we have
 -- syntax memOmegaRule := term
@@ -264,15 +263,16 @@ def evalMemOmega : Tactic := fun
     let cfg ← elabMemOmegaConfig (mkOptionalNode cfg)
     let memOmegaRules? := ← v.mapM elabMemOmegaWith
     liftMetaFinishingTactic fun g => do
-      memOmega g |>.run (← Context.init cfg memOmegaRules?)
+      memOmega g memOmegaRules? |>.run (← Context.init cfg memOmegaRules?)
   | _ => throwUnsupportedSyntax
 
 @[tactic mem_omega_bang]
 def evalMemOmegaBang : Tactic := fun
-  | `(tactic| mem_omega! $[$cfg]?) => do
+  | `(tactic| mem_omega! $[$cfg]? $[ $v:memOmegaWith ]?) => do
     let cfg ← elabMemOmegaConfig (mkOptionalNode cfg)
+    let memOmegaRules? := ← v.mapM elabMemOmegaWith
     liftMetaFinishingTactic fun g => do
-      memOmega g |>.run (← Context.init cfg.mkBang .none)
+      memOmega g memOmegaRules? |>.run (← Context.init cfg.mkBang .none)
   | _ => throwUnsupportedSyntax
 
 end MemOmega
