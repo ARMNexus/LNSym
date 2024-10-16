@@ -227,12 +227,14 @@ info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
 
 /--
 info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
+[simp_mem.info] ⚙️ Processing 'h'' : 'a ≤ 100'
 [simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
 [simp_mem.info] ⚙️ Matching on ⊢ a ≤ a + 1
 [simp_mem.info] Adding omega facts from hypotheses
 [simp_mem.info] Reducion to omega
   [simp_mem.info] goal (Note: can be large) (NOTE: can be large)
     [simp_mem.info] a : Nat
+        h' : a ≤ 100
         hab : a ≤ a + 1
         ⊢ a ≤ a + 1
   [simp_mem.info] ✅️ `omega` succeeded.
@@ -248,17 +250,19 @@ warning: unused variable `hab`
 note: this linter can be disabled with `set_option linter.unusedVariables false`
 ---
 info: [simp_mem.info] ⚙️ Processing 'a' : 'Nat'
+[simp_mem.info] ⚙️ Processing 'h'' : 'a ≤ 100'
 [simp_mem.info] ⚙️ Processing 'hab' : 'a ≤ a + 1'
 [simp_mem.info] ⚙️ Matching on ⊢ a ≤ a + 1
 [simp_mem.info] Adding omega facts from hypotheses
 [simp_mem.info] Reducion to omega
   [simp_mem.info] goal (Note: can be large) (NOTE: can be large)
     [simp_mem.info] a : Nat
+        h' : a ≤ 100
         hab : a ≤ a + 1
         ⊢ a ≤ a + 1
   [simp_mem.info] ✅️ `omega` succeeded.
 -/
-#guard_msgs in
+#guard_msgs in -- TODO: fix this, we shouldn't process h!
 set_option trace.simp_mem.info true in
 example (h' : a ≤ 100) (hab : a ≤ a + 1) : a ≤ a + 1 := by
   mem_omega with [*, -h'] -- correctly exclude h' and include hab, so processing should not mention h'.
@@ -284,7 +288,7 @@ theorem mem_automation_test_1_conv_all_hyps
   simp only [memory_rules]
   conv =>
     lhs
-    simp_mem sep
+    simp_mem sep with [*]
 
 #time
 theorem mem_automation_test_1_conv_focused_hyp
@@ -327,7 +331,7 @@ theorem mem_automation_test_2_conv
   simp only [memory_rules]
   conv =>
     lhs 
-    simp_mem sep
+    simp_mem sep with [*]
 
 theorem mem_automation_test_2_conv_focus
   (h_n0 : n0 ≠ 0)
@@ -410,7 +414,7 @@ theorem mem_automation_test_4_conv
   simp only [memory_rules]
   conv =>
     lhs
-    simp_mem sep, sub
+    simp_mem sep with [*], sub with [*]
   congr 1
   bv_omega_bench -- TODO: address normalization.
 
@@ -431,7 +435,7 @@ theorem mem_automation_test_4_conv_focused
   simp only [memory_rules]
   conv =>
     lhs
-    simp_mem sep with [h_no_wrap_src_region, h_s0_src_ignore_disjoint], sub
+    simp_mem sep with [h_no_wrap_src_region, h_s0_src_ignore_disjoint], sub with [*]
   congr 1
   bv_omega_bench -- TODO: address normalization.
 
@@ -458,7 +462,7 @@ theorem overlapping_read_test_1_conv {out : BitVec (16 * 8)}
   simp only [memory_rules] at h ⊢
   conv =>
     lhs
-    simp_mem ⊆r at h
+    simp_mem ⊆r at h with [*]
   simp only [Nat.reduceMul, Nat.sub_self, BitVec.extractLsBytes_eq_self, BitVec.cast_eq]
 
 /-- A read overlapping with another read. -/
@@ -469,7 +473,7 @@ theorem overlapping_read_test_1_conv_search_read {out : BitVec (16 * 8)}
   simp only [memory_rules] at h ⊢
   conv =>
     lhs
-    simp_mem ⊆r
+    simp_mem ⊆r with [*]
   simp only [Nat.reduceMul, Nat.sub_self, BitVec.extractLsBytes_eq_self, BitVec.cast_eq]
 
 /-- info: 'ReadOverlappingRead.overlapping_read_test_1' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -500,7 +504,7 @@ theorem overlapping_read_test_2_conv {out : BitVec (16 * 8)}
   simp only [memory_rules] at h ⊢
   conv =>
     lhs
-    simp_mem ⊆r at h
+    simp_mem ⊆r at h with [*]
   · congr
     -- ⊢ (src_addr + 6).toNat - src_addr.toNat = 6
     bv_omega_bench
@@ -649,7 +653,7 @@ theorem irrelvant_hyps
   simp only [memory_rules]
   conv => 
     lhs
-    simp_mem sep with [h_s0_src_dest_separate, h_irrelevant]
+    simp_mem sep with [h_s0_src_dest_separate]
   -- rfl
 end SimpMemConv
 

@@ -104,33 +104,31 @@ def mkKeepHypsOfUserHyp (g : MVarId) (set : Std.HashSet FVarId) (hyp : UserHyp) 
   | .expr _e => return set
 
 /--
-Given the user hypotheses, build a more focusedd MVarId that contains only those hypotheses.
-This makes `omega` focus only on those hypotheses, since omega by default crawls the entire goal state.
-
-This is arguably a workaround to having to plumb the hypotheses through the full layers of code, but it works,
-and should be a cheap solution.
+Fold over the array of `UserHyps`, build tracking `FVarId`s for the ones that we use.
+if the array is `.none`, then we keep everything. 
 -/
-def mkGoalWithOnlyUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : MetaM <| MVarId :=
-  match userHyps? with
-  | none => pure g
-  | some userHyps => do
-    g.withContext do 
-      let mut keepHyps : Std.HashSet FVarId ← userHyps.foldlM
-        (init := ∅)
-        (mkKeepHypsOfUserHyp g)
-      let hyps ← g.getNondepPropHyps
-      let mut g := g
-      for h in hyps do
-        if !keepHyps.contains h then
-          try 
-            g ← g.withContext <| g.clear h
-          catch e =>
-            let hname := (← getLCtx).get! h |>.userName
-            throwTacticEx `simp_mem g <| .some m!"unable to clear hypothesis '{hname}' when trying to focus on hypotheses.{Format.line}Consider adding '{hname}' to the set of retained hypotheses.{Format.line}Error from `clear` is: {indentD e.toMessageData}"
-      return g
+def mkKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : MetaM <| Std.HashSet FVarId :=
+  (userHyps?.getD #[]).foldlM (init := ∅) (MemOmega.mkKeepHypsOfUserHyp g)
+
+/-- Fold over the array of `UserHyps`, build tracking `FVarId`s for the ones that we use.
+if the array is `.none`, then we keep everything. 
+-/
+def mkMemoryAndKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : MetaM <| Array Memory.Hypothesis × Array FVarId := do 
+  let keepHyps : Std.HashSet FVarId ← mkKeepHypsOfUserHyps g userHyps?
+  g.withContext do
+    let mut foundHyps : Array Memory.Hypothesis := #[]
+    let mut nonmem := #[]
+    for h in keepHyps do
+      let sz := foundHyps.size
+      foundHyps ← hypothesisOfExpr (Expr.fvar h) foundHyps
+      if foundHyps.size == sz then 
+        -- size did not change, so that was a non memory hyp.
+        nonmem := nonmem.push h
+    return (foundHyps, nonmem)
+  
+  
 
 def memOmega (g : MVarId) : MemOmegaM Unit := do
-    let g ← mkGoalWithOnlyUserHyps g (← readThe Context).userHyps? 
     g.withContext do
       let rawHyps ← getLocalHyps
       let mut hyps := #[]
@@ -159,7 +157,6 @@ def memOmega (g : MVarId) : MemOmegaM Unit := do
             throw e
 
 def memOmegaWithHyps (g : MVarId) (rawHyps : Array FVarId) : MemOmegaM Unit := do
-    let g ← mkGoalWithOnlyUserHyps g (← readThe Context).userHyps? 
     g.withContext do
       let mut hyps := #[]
       -- extract out structed values for all hyps.

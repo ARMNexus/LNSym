@@ -211,21 +211,21 @@ def getConfig : SimpMemM SimpMemConfig := do
 #guard_msgs in #check state_value
 
 
-def SimpMemM.findOverlappingReadHypAux (hyps : Array Memory.Hypothesis) (er : ReadBytesExpr)  (hReadEq : ReadBytesEqProof) :
+def SimpMemM.findOverlappingReadHypAux (extraOmegaHyps : Array Expr) (hyps : Array Memory.Hypothesis) (er : ReadBytesExpr)  (hReadEq : ReadBytesEqProof) :
     SimpMemM <| Option (MemSubsetProof { sa := er.span, sb := hReadEq.read.span }) := do
   withTraceNode m!"{processingEmoji} ... ⊆ {hReadEq.read.span} ? " do
     -- the read we are analyzing should be a subset of the hypothesis
     let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
-    let some hSubsetProof ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps
+    let some hSubsetProof ← proveWithOmega? subset extraOmegaHyps (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps
       | return none
     return some (hSubsetProof)
 
-def SimpMemM.findOverlappingReadHyp (hyps : Array Memory.Hypothesis) (er : ReadBytesExpr) :
+def SimpMemM.findOverlappingReadHyp (extraOmegaHyps : Array Expr) (hyps : Array Memory.Hypothesis) (er : ReadBytesExpr) :
     SimpMemM <| Option (Σ (hread : ReadBytesEqProof),  MemSubsetProof { sa := er.span, sb := hread.read.span }) := do
   for hyp in hyps do
     let Hypothesis.read_eq hReadEq := hyp
       | continue
-    let some subsetProof ← SimpMemM.findOverlappingReadHypAux hyps er hReadEq
+    let some subsetProof ← SimpMemM.findOverlappingReadHypAux extraOmegaHyps hyps er hReadEq
       | continue
     return some ⟨hReadEq, subsetProof⟩
   return none
@@ -274,12 +274,12 @@ partial def SimpMemM.simplifyExpr (e : Expr) (hyps : Array Memory.Hypothesis) : 
 
     let separate := MemSeparateProp.mk er.span ew.span
     let subset := MemSubsetProp.mk er.span ew.span
-    if let .some separateProof ← proveWithOmega? separate (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps then do
+    if let .some separateProof ← proveWithOmega? separate (← (← getMainGoal).getNondepPropExprs) (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps then do
       trace[simp_mem.info] "{checkEmoji} {separate}"
       let result ← MemSeparateProof.rewriteReadOfSeparatedWrite er ew separateProof e
       setChanged
       return result
-    else if let .some subsetProof ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps then do
+    else if let .some subsetProof ← proveWithOmega? subset  (← (← getMainGoal).getNondepPropExprs) (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps then do
       trace[simp_mem.info] "{checkEmoji} {subset}"
       let result ← MemSubsetProof.rewriteReadOfSubsetWrite er ew subsetProof e
       setChanged
@@ -294,7 +294,7 @@ partial def SimpMemM.simplifyExpr (e : Expr) (hyps : Array Memory.Hypothesis) : 
     -- we can add the theorem that `(write region).read = write val`.
     -- Then this generic theory will take care of it.
     withTraceNode m!"Searching for overlapping read {er.span}." do
-      let some ⟨hReadEq, hSubsetProof⟩ ← findOverlappingReadHyp hyps er
+      let some ⟨hReadEq, hSubsetProof⟩ ← findOverlappingReadHyp (← (← getMainGoal).getNondepPropExprs) hyps er
         | SimpMemM.walkExpr e hyps
       let out ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq hSubsetProof e
       setChanged
@@ -345,9 +345,8 @@ partial def SimpMemM.simplifyGoal (g : MVarId) (hyps : Array Memory.Hypothesis) 
         replaceMainGoal [newGoal]
 end
 
-def SimpMemM.findMemoryHyps (g : MVarId) : SimpMemM <| Array Memory.Hypothesis := do
+def SimpMemM.mkMemoryHypsFrom (g : MVarId) (hyps : (Array Expr))  : SimpMemM <| Array Memory.Hypothesis := do
   g.withContext do
-    let hyps := (← getLocalHyps)
     withTraceNode m!"Searching for Hypotheses" do
       let mut foundHyps : Array Memory.Hypothesis := #[]
       for h in hyps do
@@ -411,35 +410,35 @@ def SimpMemM.simplifySupervisedCore (g : MVarId) (e : Expr) (guidance : Guidance
         let .some ew := WriteBytesExpr.ofExpr? er.mem 
           | throwError "{crossEmoji} expected to find read of write based on '⊂' guidance, but found read of '{er.mem}'"
         let subset := MemSubsetProp.mk er.span ew.span
-        let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g guidance.userHyps?
+        /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
+        let keepHyps : Std.HashSet FVarId ← (guidance.userHyps?.getD #[]).foldlM (init := ∅) (fun s uh => MemOmega.mkKeepHypsOfUserHyp g s uh)
+        let keepHyps := (keepHyps.toArray.map Expr.fvar) 
+        let hyps ← SimpMemM.mkMemoryHypsFrom g keepHyps
         withContext g do
-          let hyps ← SimpMemM.findMemoryHyps g
-          /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
-          let (subsetProof, gs) ← do 
-            match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
-            | .some p => pure (p, #[])
-            | .none => do 
-               Meta.logWarning m!"simp_mem: Unable to prove subset {subset}, creating user obligation."
-               let (p, g') ← mkProofGoalForOmega subset
-               pure (p, #[g'])
-          return (← MemSubsetProof.rewriteReadOfSubsetWrite er ew subsetProof e, gs)
+          match ← proveWithOmega? subset keepHyps (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
+          | .some p => 
+              return (← MemSubsetProof.rewriteReadOfSubsetWrite er ew p e, #[])
+          | .none => do 
+             Meta.logWarning m!"simp_mem: Unable to prove subset {subset}, creating user obligation."
+             let (p, g') ← mkProofGoalForOmega subset
+             return (← MemSubsetProof.rewriteReadOfSubsetWrite er ew p e, #[g'])
     | .separateWrite => 
         -- TODO: unify code with other branch.
         let .some ew := WriteBytesExpr.ofExpr? er.mem 
           | throwError "{crossEmoji} expected to find read of write based on '⟂' guidance, but found read of '{er.mem}'"
-        let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g guidance.userHyps?
-        withContext g do
-          let hyps ← SimpMemM.findMemoryHyps g
-          let separate := MemSeparateProp.mk er.span ew.span
+        let separate := MemSeparateProp.mk er.span ew.span
+        let keepHyps : Std.HashSet FVarId ← (guidance.userHyps?.getD #[]).foldlM (init := ∅) (fun s uh => MemOmega.mkKeepHypsOfUserHyp g s uh)
+        let keepHyps := (keepHyps.toArray.map Expr.fvar) 
+        let hyps ← SimpMemM.mkMemoryHypsFrom g keepHyps
           /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
-          let (separateProof, gs) ← do
-            match ← proveWithOmega? separate (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
-            | .some p => pure (p, #[])
+        withContext g do
+            match ← proveWithOmega? separate keepHyps (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
+            | .some p =>
+              return (← MemSeparateProof.rewriteReadOfSeparatedWrite er ew p e, #[])
             | .none => do
               Meta.logWarning m!"simp_mem: Unable to prove separate {separate}, creating user obligation."
               let (p, g') ← mkProofGoalForOmega separate
-              pure (p, #[g'])
-          pure (← MemSeparateProof.rewriteReadOfSeparatedWrite er ew separateProof e, gs)
+              return (← MemSeparateProof.rewriteReadOfSeparatedWrite er ew p e, #[g'])
     | .subsetRead hread? => do
         -- If the user has provided guidance hypotheses, add the user hypothesis to this list.
         -- If the user has not provided guidance hypotheses, then we don't filter the list, so 
@@ -451,34 +450,36 @@ def SimpMemM.simplifySupervisedCore (g : MVarId) (e : Expr) (guidance : Guidance
           -- -- User wants filtering, and wants this read hypothesis to be used.
           -- -- Add it into the set of user provided hypotheses.
           |  (.some userHyps, .some readHyp) => .some <| userHyps.push (MemOmega.UserHyp.ofExpr readHyp)
-        let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g userHyps?
-          let hyps ← SimpMemM.findMemoryHyps g
-          match hread? with
-          | .none => do 
-            /-
-            User hasn't given us a read, so find a read. No recovery possible,
-            Because the expression we want to rewrite into depends on knowing what the read was.
-            -/
-            let .some ⟨hreadEq, proof⟩ ← findOverlappingReadHyp hyps er
-              | throwError "{crossEmoji} unable to find overlapping read for {er}"
-            return (←  MemSubsetProof.rewriteReadOfSubsetRead er hreadEq proof e, #[])
-          | .some hyp => do
-            /- 
-            User has given us a read, prove that it works.
-            TODO: replace the use of throwError with telling the user to prove the goals if enabled.
-            -/
-            let .some hReadEq := (← ReadBytesEqProof.ofExpr? hyp (← inferType hyp)).get? 0
-              | throwError "{crossEmoji} expected user provided read hypohesis {hyp} to be a read"
-            let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
-            match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps with
-            | .some p => do 
-                let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
-                return (result, #[])
-            | .none => do
-                Meta.logWarning m!"simp_mem: Unable to prove read subset {subset}, creating user obligation."
-                let (p, g') ← mkProofGoalForOmega subset
-                let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
-                return (result, #[g'])
+        let keepHyps : Std.HashSet FVarId ← (userHyps?.getD #[]).foldlM (init := ∅) (fun s uh => MemOmega.mkKeepHypsOfUserHyp g s uh)
+        let keepHyps := (keepHyps.toArray.map Expr.fvar) 
+        -- TODO: build keepHyps from Hypothesis.
+        let hyps ← SimpMemM.mkMemoryHypsFrom g keepHyps
+        match hread? with
+        | .none => do 
+          /-
+          User hasn't given us a read, so find a read. No recovery possible,
+          Because the expression we want to rewrite into depends on knowing what the read was.
+          -/
+          let .some ⟨hreadEq, proof⟩ ← findOverlappingReadHyp keepHyps hyps er
+            | throwError "{crossEmoji} unable to find overlapping read for {er}"
+          return (←  MemSubsetProof.rewriteReadOfSubsetRead er hreadEq proof e, #[])
+        | .some hyp => do
+          /- 
+          User has given us a read, prove that it works.
+          TODO: replace the use of throwError with telling the user to prove the goals if enabled.
+          -/
+          let .some hReadEq := (← ReadBytesEqProof.ofExpr? hyp (← inferType hyp)).get? 0
+            | throwError "{crossEmoji} expected user provided read hypohesis {hyp} to be a read"
+          let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
+          match ← proveWithOmega? subset keepHyps (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps with
+          | .some p => do 
+              let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
+              return (result, #[])
+          | .none => do
+              Meta.logWarning m!"simp_mem: Unable to prove read subset {subset}, creating user obligation."
+              let (p, g') ← mkProofGoalForOmega subset
+              let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
+              return (result, #[g'])
 
 
 partial def SimpMemM.simplifySupervised (g : MVarId) (guidances : Array Guidance) : SimpMemM Unit := do
