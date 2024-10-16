@@ -112,6 +112,8 @@ def mkKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : Met
 
 /-- Fold over the array of `UserHyps`, build tracking `FVarId`s for the ones that we use.
 if the array is `.none`, then we keep everything. 
+This partitions `userHyps` into the ones that create `Memory.Hypothesis`, and the ones that we leave as `FVarId`s,
+which may contain memory assumptions that we cannot translate (eg. bounds like `b - a ≤ 200`.)
 -/
 def mkMemoryAndKeepHypsOfUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : MetaM <| Array Memory.Hypothesis × Array FVarId := do 
   let keepHyps : Std.HashSet FVarId ← mkKeepHypsOfUserHyps g userHyps?
