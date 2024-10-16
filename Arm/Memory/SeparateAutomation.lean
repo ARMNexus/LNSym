@@ -393,97 +393,114 @@ partial def SimpMemM.simpifyLoopUnsupervised : SimpMemM Unit := do
         throwError "{crossEmoji} simp_mem failed to make any progress."
 
 
-partial def SimpMemM.simplifyLoopSupervisedGo (g : MVarId) (guidance : Guidance) : SimpMemM (SimplifyResult × Array MVarId) := do
+
+/-- Make this an auxiliary definition because lean was taking way too long inferring this typeclass -/
+private def Meta.logWarning (msgData : Lean.MessageData) : MetaM Unit := Lean.logWarning msgData
+
+def SimpMemM.simplifySupervisedCore (g : MVarId) (e : Expr) (guidance : Guidance) : SimpMemM (SimplifyResult × Array MVarId) := do
   withContext g do
-  let e := (← getMainTarget).consumeMData
-  let e ← instantiateMVars e
+    let e := e.consumeMData
+    let e ← instantiateMVars e
 
-  let .some er := ReadBytesExpr.ofExpr? e
-    | throwError "{crossEmoji} expected to find 'Memory.read ...', but found {indentD e}"
+    let .some er := ReadBytesExpr.ofExpr? e
+      | throwError "{crossEmoji} expected to find 'Memory.read ...', but found {indentD e}"
 
-  match guidance.kind with
-  | .subsetWrite => do
-      -- TODO: unify code with other branch.
-      let .some ew := WriteBytesExpr.ofExpr? er.mem 
-        | throwError "{crossEmoji} expected to find read of write based on '⊂' guidance, but found read of '{er.mem}'"
-      let subset := MemSubsetProp.mk er.span ew.span
-      let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g guidance.userHyps?
-      withContext g do
-        let hyps ← SimpMemM.findMemoryHyps g
-        /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
-        let (subsetProof, gs) ← do 
-          match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
-          | .some p => pure (p, #[])
+    match guidance.kind with
+    | .subsetWrite => do
+        -- TODO: unify code with other branch.
+        let .some ew := WriteBytesExpr.ofExpr? er.mem 
+          | throwError "{crossEmoji} expected to find read of write based on '⊂' guidance, but found read of '{er.mem}'"
+        let subset := MemSubsetProp.mk er.span ew.span
+        let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g guidance.userHyps?
+        withContext g do
+          let hyps ← SimpMemM.findMemoryHyps g
+          /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
+          let (subsetProof, gs) ← do 
+            match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
+            | .some p => pure (p, #[])
+            | .none => do 
+               Meta.logWarning m!"simp_mem: Unable to prove subset {subset}, creating user obligation."
+               let (p, g') ← mkProofGoalForOmega subset
+               pure (p, #[g'])
+          return (← MemSubsetProof.rewriteReadOfSubsetWrite er ew subsetProof e, gs)
+    | .separateWrite => 
+        -- TODO: unify code with other branch.
+        let .some ew := WriteBytesExpr.ofExpr? er.mem 
+          | throwError "{crossEmoji} expected to find read of write based on '⟂' guidance, but found read of '{er.mem}'"
+        let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g guidance.userHyps?
+        withContext g do
+          let hyps ← SimpMemM.findMemoryHyps g
+          let separate := MemSeparateProp.mk er.span ew.span
+          /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
+          let (separateProof, gs) ← do
+            match ← proveWithOmega? separate (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
+            | .some p => pure (p, #[])
+            | .none => do
+              Meta.logWarning m!"simp_mem: Unable to prove separate {separate}, creating user obligation."
+              let (p, g') ← mkProofGoalForOmega separate
+              pure (p, #[g'])
+          pure (← MemSeparateProof.rewriteReadOfSeparatedWrite er ew separateProof e, gs)
+    | .subsetRead hread? => do
+        -- If the user has provided guidance hypotheses, add the user hypothesis to this list.
+        -- If the user has not provided guidance hypotheses, then we don't filter the list, so 
+        -- we don't add it
+        let userHyps? : Option (Array MemOmega.UserHyp) := 
+          match (guidance.userHyps?, hread?) with
+          | (.none, _) => .none -- nothing to filter, just keep everything.
+          | (.some userHyps, .none) => .some userHyps
+          -- -- User wants filtering, and wants this read hypothesis to be used.
+          -- -- Add it into the set of user provided hypotheses.
+          |  (.some userHyps, .some readHyp) => .some <| userHyps.push (MemOmega.UserHyp.ofExpr readHyp)
+        let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g userHyps?
+          let hyps ← SimpMemM.findMemoryHyps g
+          match hread? with
           | .none => do 
-             let (p, g') ← mkProofGoalForOmega subset
-             pure (p, #[g'])
-        return (← MemSubsetProof.rewriteReadOfSubsetWrite er ew subsetProof e, gs)
-  | .separateWrite => 
-      -- TODO: unify code with other branch.
-      let .some ew := WriteBytesExpr.ofExpr? er.mem 
-        | throwError "{crossEmoji} expected to find read of write based on '⟂' guidance, but found read of '{er.mem}'"
-      let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g guidance.userHyps?
-      withContext g do
-        let hyps ← SimpMemM.findMemoryHyps g
-        let separate := MemSeparateProp.mk er.span ew.span
-        /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
-        let (separateProof, gs) ← do
-          match ← proveWithOmega? separate (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
-          | .some p => pure (p, #[])
-          | .none => 
-            let (p, g') ← mkProofGoalForOmega separate
-            pure (p, #[g'])
-        pure (← MemSeparateProof.rewriteReadOfSeparatedWrite er ew separateProof e, gs)
-  | .subsetRead hread? => do
-      -- If the user has provided guidance hypotheses, add the user hypothesis to this list.
-      -- If the user has not provided guidance hypotheses, then we don't filter the list, so 
-      -- we don't add it
-      let userHyps? : Option (Array MemOmega.UserHyp) := 
-        match (guidance.userHyps?, hread?) with
-        | (.none, _) => .none
-        | (.some userHyps, .none) => .some userHyps
-        -- -- User wants filtering, and wants this read hypothesis to be used.
-        -- -- Add it into the set of user provided hypotheses.
-        |  (.some userHyps, .some readHyp) => .some <| userHyps.push (MemOmega.UserHyp.ofExpr readHyp)
-      let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g userHyps?
-        let hyps ← SimpMemM.findMemoryHyps g
-        match hread? with
-        | .none => do 
-          /-
-          User hasn't given us a read, so find a read. No recovery possible,
-          Because the expression we want to rewrite into depends on knowing what the read was.
-          -/
-          let .some ⟨hreadEq, proof⟩ ← findOverlappingReadHyp hyps er
-            | throwError "{crossEmoji} unable to find overlapping read for {er}"
-          return (←  MemSubsetProof.rewriteReadOfSubsetRead er hreadEq proof e, #[])
-        | .some hyp => do
-          /- 
-          User has given us a read, prove that it works.
-          TODO: replace the use of throwError with telling the user to prove the goals if enabled.
-          -/
-          let .some hReadEq := (← ReadBytesEqProof.ofExpr? hyp (← inferType hyp)).get? 0
-            | throwError "{crossEmoji} expected user provided read hypohesis {hyp} to be a read"
-          let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
-          match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps with
-          | .some p => do 
-              let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
-              return (result, #[])
-          | .none => do
-              let (p, g') ← mkProofGoalForOmega subset
-              let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
-              return (result, #[g'])
-              
+            /-
+            User hasn't given us a read, so find a read. No recovery possible,
+            Because the expression we want to rewrite into depends on knowing what the read was.
+            -/
+            let .some ⟨hreadEq, proof⟩ ← findOverlappingReadHyp hyps er
+              | throwError "{crossEmoji} unable to find overlapping read for {er}"
+            return (←  MemSubsetProof.rewriteReadOfSubsetRead er hreadEq proof e, #[])
+          | .some hyp => do
+            /- 
+            User has given us a read, prove that it works.
+            TODO: replace the use of throwError with telling the user to prove the goals if enabled.
+            -/
+            let .some hReadEq := (← ReadBytesEqProof.ofExpr? hyp (← inferType hyp)).get? 0
+              | throwError "{crossEmoji} expected user provided read hypohesis {hyp} to be a read"
+            let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
+            match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps with
+            | .some p => do 
+                let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
+                return (result, #[])
+            | .none => do
+                Meta.logWarning m!"simp_mem: Unable to prove read subset {subset}, creating user obligation."
+                let (p, g') ← mkProofGoalForOmega subset
+                let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
+                return (result, #[g'])
 
-partial def SimpMemM.simplifyLoopSupervised (g : MVarId) (guidances : Array Guidance) : SimpMemM Unit := do
+
+partial def SimpMemM.simplifySupervised (g : MVarId) (guidances : Array Guidance) : SimpMemM Unit := do
   let mut g := g
   let mut sideGoals : Array MVarId := #[]
   for guidance in guidances do
-    let (outProof, newGoals) ← simplifyLoopSupervisedGo g guidance
+    let (outProof, newGoals) ← simplifySupervisedCore g (← g.getType) guidance
     sideGoals := sideGoals.append newGoals
     check outProof.eqProof
     g ←  g.replaceTargetEq outProof.eNew outProof.eqProof
   appendGoals sideGoals.toList
   return ()
+
+partial def SimpMemM.simplifySupervisedConv (guidances : Array Guidance) : SimpMemM Unit := do
+  withMainContext do
+    let mut gs := #[]
+    for guidance in guidances do
+      let lhs ← Conv.getLhs
+      let (result, newGoals) ← withMainContext do SimpMemM.simplifySupervisedCore (← getMainGoal) lhs guidance
+      withMainContext do Conv.updateLhs result.eNew result.eqProof
+      gs := gs.append newGoals
+    appendGoals gs.toList -- append oblgations.
 
 /--
 Given a collection of facts, try prove `False` using the omega algorithm,
@@ -493,7 +510,10 @@ def simpMemUnsupervisedTac (cfg : SimpMemConfig := {}) : TacticM Unit := do
     SimpMemM.run SimpMemM.simpifyLoopUnsupervised  cfg
 
 def simpMemSupervisedTac (cfg : SimpMemConfig := {}) (guidances: Array Guidance) : TacticM Unit := do
-    SimpMemM.run (SimpMemM.simplifyLoopSupervised (← getMainGoal) guidances) cfg 
+    SimpMemM.run (SimpMemM.simplifySupervised (← getMainGoal) guidances) cfg 
+
+def simpMemSupervisedConvTac (cfg : SimpMemConfig := {}) (guidances: Array Guidance) : TacticM Unit := do
+    SimpMemM.run (SimpMemM.simplifySupervisedConv  guidances) cfg 
 
 end SeparateAutomation
 
@@ -511,10 +531,10 @@ The kind of simplification that must be performed. If we are told
 that we must simplify a separation, a subset, or a read of a write,
 we perform this kind of simplification.
 -/
-syntax guidanceKindSeparate := &"⟂"
-syntax guidanceKindSubset := &"⊂"
-syntax guidanceKindSubsetRead := &"⊂"
-syntax guidanceKind := guidanceKindSeparate <|> guidanceKindSubset (guidanceKindSubsetRead (term)?)? 
+syntax guidanceKindSeparate := &"sep" <|> &"⟂"
+syntax guidanceKindSubset := &"sub" <|> &"⊆"-- &"⊂"
+syntax guidanceKindSubsetRead := &"r" -- &"⊂"
+syntax guidanceKind := guidanceKindSeparate <|> guidanceKindSubset (guidanceKindSubsetRead ("at" term)?)? 
 
 /--
 User driven guidance for `simp_mem`, which is of the form `⟂` | `⊂` | `⊂ r hyp?`
@@ -555,34 +575,39 @@ which hypotheses are at play. `simp_mem` can be controlled along multiple axes:
    + `simp_mem at h₁, h₂, ⊢`
 
 -/
-syntax (name := simp_mem) "simp_mem" (Lean.Parser.Tactic.config)? guidance,*  : tactic
+syntax (name := simpMem) "simp_mem" (Lean.Parser.Tactic.config)? guidance,*  : tactic
 
+
+open Lean.Parser.Tactic SimpMem.Syntax in
+/-- Executes the given conv block without converting regular goal into a `conv` goal. -/
+syntax (name := convSimpMem) "simp_mem" (Lean.Parser.Tactic.config)? guidance,+ : conv
 
 open SimpMem.Syntax MemOmega in
 def elabGuidanceKind (stx : TSyntax `SimpMem.Syntax.guidanceKind) : TacticM (SeparateAutomation.Guidance.Kind) := do
   match stx with
   | `(guidanceKind| $_:guidanceKindSeparate) => do
       return SeparateAutomation.Guidance.Kind.separateWrite
-  | `(guidanceKind| $_:guidanceKindSubset $_:guidanceKindSubsetRead $t:term) => do
-     /-
-     Adapted from Lean.Elab.Tactic.Rw.WithRWRulesSeq,
-     Lean.Elab.Tactic.Simp.resolveSimpIdTheorem,
-     Lean.Elab.Tactic.Simp.addSimpTheorem 
-     -/
-     let te : Expr ← do
-       if let .some fvarId ← optional <| getFVarId t then
-         pure <| Expr.fvar fvarId
-       else 
-         let e ← Term.elabTerm t none
-         Term.synthesizeSyntheticMVars (postpone := .no) (ignoreStuckTC := true)
-         let e ← instantiateMVars e
-         let e := e.eta
-         if e.hasMVar then
-           throwErrorAt t "found metavariables when elaborating rule, giving up."
-         pure e
-      return SeparateAutomation.Guidance.Kind.subsetRead <| some te
   | `(guidanceKind| $_:guidanceKindSubset $_:guidanceKindSubsetRead) => do
       return SeparateAutomation.Guidance.Kind.subsetRead .none
+  | `(guidanceKind| $_:guidanceKindSubset $_:guidanceKindSubsetRead at $t:term) => do
+     withMainContext do
+       /-
+       Adapted from Lean.Elab.Tactic.Rw.WithRWRulesSeq,
+       Lean.Elab.Tactic.Simp.resolveSimpIdTheorem,
+       Lean.Elab.Tactic.Simp.addSimpTheorem 
+       -/
+       let te : Expr ← do
+         if let .some fvarId ← optional <| getFVarId t then
+           pure <| Expr.fvar fvarId
+         else 
+           let e ← Term.elabTerm t none
+           Term.synthesizeSyntheticMVars (postpone := .no) (ignoreStuckTC := true)
+           let e ← instantiateMVars e
+           let e := e.eta
+           if e.hasMVar then
+             throwErrorAt t "found metavariables when elaborating user guidance '{t}', giving up."
+           pure e
+        return SeparateAutomation.Guidance.Kind.subsetRead <| some te
   | `(guidanceKind| $_:guidanceKindSubset) => do
       return SeparateAutomation.Guidance.Kind.subsetWrite
   | _ => throwUnsupportedSyntax 
@@ -599,13 +624,25 @@ def elabGuidance : TSyntax `SimpMem.Syntax.guidance → TacticM (SeparateAutomat
 | _ => throwUnsupportedSyntax
 
 
-@[tactic simp_mem]
+@[tactic simpMem]
 def evalSimpMem : Tactic := fun
-  | `(tactic| simp_mem $[$cfg]?) => do
-    let cfg ← elabSimpMemConfig (mkOptionalNode cfg)
-    SeparateAutomation.simpMemUnsupervisedTac cfg 
+  -- | `(tactic| simp_mem $[$cfg]?) => do
+  --   let cfg ← elabSimpMemConfig (mkOptionalNode cfg)
+  --   SeparateAutomation.simpMemUnsupervisedTac cfg 
   | `(tactic| simp_mem $[$cfg]? $[ $guidancesStx:guidance ],* ) => do
     let cfg ← elabSimpMemConfig (mkOptionalNode cfg)
     let guidances ← guidancesStx.mapM elabGuidance
-    SeparateAutomation.simpMemSupervisedTac cfg  guidances
+    if guidances.isEmpty then
+      SeparateAutomation.simpMemUnsupervisedTac cfg 
+    else 
+      SeparateAutomation.simpMemSupervisedTac cfg  guidances
+  | _ => throwUnsupportedSyntax
+
+
+@[tactic convSimpMem]
+def evalConvSimpMem : Tactic := fun
+  | `(conv| simp_mem $[$cfg]? $[ $guidancesStx:guidance ],* ) => do
+      let cfg ← elabSimpMemConfig (mkOptionalNode cfg)
+      let guidances ← guidancesStx.mapM elabGuidance
+      SeparateAutomation.simpMemSupervisedConvTac cfg  guidances
   | _ => throwUnsupportedSyntax

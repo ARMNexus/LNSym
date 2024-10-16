@@ -122,7 +122,11 @@ def mkGoalWithOnlyUserHyps (g : MVarId) (userHyps? : Option (Array UserHyp)) : M
       let mut g := g
       for h in hyps do
         if !keepHyps.contains h then
-          g ← g.withContext <| g.clear h
+          try 
+            g ← g.withContext <| g.clear h
+          catch e =>
+            let hname := (← getLCtx).get! h |>.userName
+            throwTacticEx `simp_mem g <| .some m!"unable to clear hypothesis '{hname}' when trying to focus on hypotheses.{Format.line}Consider adding '{hname}' to the set of retained hypotheses.{Format.line}Error from `clear` is: {indentD e.toMessageData}"
       return g
 
 def memOmega (g : MVarId) : MemOmegaM Unit := do
