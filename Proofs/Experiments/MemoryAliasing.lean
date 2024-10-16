@@ -282,8 +282,9 @@ theorem mem_automation_test_1_conv_all_hyps
   read_mem_bytes 16 src_addr (write_mem_bytes 16 dest_addr blah s0) =
   read_mem_bytes 16 src_addr s0 := by
   simp only [memory_rules]
-  simp_mem sep
-  rfl
+  conv =>
+    lhs
+    simp_mem sep
 
 #time
 theorem mem_automation_test_1_conv_focused_hyp
@@ -291,8 +292,9 @@ theorem mem_automation_test_1_conv_focused_hyp
   read_mem_bytes 16 src_addr (write_mem_bytes 16 dest_addr blah s0) =
   read_mem_bytes 16 src_addr s0 := by
   simp only [memory_rules]
-  simp_mem sep 
-  rfl
+  conv =>
+    lhs
+    simp_mem sep with [h_s0_src_dest_separate]
 
 /-- info: 'mem_automation_test_1' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms mem_automation_test_1
@@ -323,8 +325,9 @@ theorem mem_automation_test_2_conv
   read_mem_bytes 16 src_addr (write_mem_bytes 16 dest_addr blah s0) =
   read_mem_bytes 16 src_addr s0 := by
   simp only [memory_rules]
-  simp_mem sep
-  rfl
+  conv =>
+    lhs 
+    simp_mem sep
 
 theorem mem_automation_test_2_conv_focus
   (h_n0 : n0 ≠ 0)
@@ -336,8 +339,9 @@ theorem mem_automation_test_2_conv_focus
   read_mem_bytes 16 src_addr (write_mem_bytes 16 dest_addr blah s0) =
   read_mem_bytes 16 src_addr s0 := by
   simp only [memory_rules]
-  simp_mem sep with [h_s0_src_dest_separate, h_no_wrap_src_region, h_no_wrap_dest_region, h_n0]
-  rfl
+  conv =>
+    lhs 
+    simp_mem sep with [h_n0, h_no_wrap_src_region, h_no_wrap_dest_region, h_s0_src_dest_separate]
 
 /-- info: 'mem_automation_test_2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms mem_automation_test_2
@@ -369,8 +373,9 @@ theorem mem_automation_test_3_conv
   read_mem_bytes 10 (src_addr + 1) (write_mem_bytes ignore_n ignore_addr blah s0) =
    read_mem_bytes 10 (src_addr + 1) s0 := by
   simp only [memory_rules]
-  simp_mem sep with [*]
-  rfl
+  conv =>
+    lhs
+    simp_mem sep with [*]
 
 /-- info: 'mem_automation_test_3' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms mem_automation_test_3
@@ -403,7 +408,9 @@ theorem mem_automation_test_4_conv
       (write_mem_bytes 48 src_addr val s0)) =
    val.extractLsBytes 1 10 := by
   simp only [memory_rules]
-  simp_mem sep, sub
+  conv =>
+    lhs
+    simp_mem sep, sub
   congr 1
   bv_omega_bench -- TODO: address normalization.
 
@@ -431,7 +438,9 @@ theorem overlapping_read_test_1_conv {out : BitVec (16 * 8)}
     (h : read_mem_bytes 16 src_addr s = out) :
     read_mem_bytes 16 src_addr s = out := by
   simp only [memory_rules] at h ⊢
-  simp_mem ⊆r at h
+  conv =>
+    lhs
+    simp_mem ⊆r at h
   simp only [Nat.reduceMul, Nat.sub_self, BitVec.extractLsBytes_eq_self, BitVec.cast_eq]
 
 /-- A read overlapping with another read. -/
