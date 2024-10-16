@@ -174,7 +174,7 @@ info: 'MaxTandem.program.stepi_0x894_cut' depends on axioms: [propext, Classical
 
 -- 2/15: str  w0, [sp, #12]  ; sp[12] = w0_a
 set_option trace.simp_mem.info true in
-theorem program.stepi_0x898_cut (s sn : ArmState)
+#time theorem program.stepi_0x898_cut (s sn : ArmState)
   (h_program : s.program = program)
   (h_pc : r StateField.PC s = 0x898#64)
   (h_err : r StateField.ERR s = StateError.None)
@@ -198,8 +198,9 @@ theorem program.stepi_0x898_cut (s sn : ArmState)
   simp only [pcs, List.mem_cons, BitVec.reduceEq, List.mem_singleton, or_self, not_false_eq_true,
     true_and, List.not_mem_nil, or_self, not_false_eq_true, true_and]
   simp only [memory_rules, state_simp_rules]
-  simp_mem
-  rfl
+  conv =>
+    lhs
+    simp_mem sep with [h_legal]
 
 /--
 info: 'MaxTandem.program.stepi_0x898_cut' depends on axioms: [propext, Classical.choice, Lean.ofReduceBool, Quot.sound]
