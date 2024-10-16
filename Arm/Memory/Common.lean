@@ -757,6 +757,23 @@ instance : OmegaReducible MemSeparateProp where
     let bn := separate.sb.n
     mkAppN (Expr.const ``mem_separate'.of_omega []) #[an, bn, a, b]
 
+
+/-- For a goal that is reducible to `Omega`, make a new goal to be presented to the user -/
+def mkProofGoalForOmega {α : Type} [ToMessageData α] [OmegaReducible α] (e : α) : MetaM (Proof α e × MVarId) := do
+  let proofFromOmegaVal := (OmegaReducible.reduceToOmega e)
+  -- (h : a.toNat + n ≤ 2 ^ 64) → mem_legal' a n
+  let proofFromOmegaTy ← inferType (OmegaReducible.reduceToOmega e)
+  -- trace[simp_mem.info] "partially applied: '{proofFromOmegaVal} : {proofFromOmegaTy}'"
+  let omegaObligationTy ← do -- (h : a.toNat + n ≤ 2 ^ 64)
+    match proofFromOmegaTy with
+    | Expr.forallE _argName argTy _body _binderInfo => pure argTy
+    | _ => throwError "expected '{proofFromOmegaTy}' to a ∀"
+  trace[simp_mem.info] "omega obligation '{omegaObligationTy}'"
+  let omegaObligationVal ← mkFreshExprMVar (type? := omegaObligationTy)
+  let factProof := mkAppN proofFromOmegaVal #[omegaObligationVal]
+  let g := omegaObligationVal.mvarId!
+  return (Proof.mk (← instantiateMVars factProof), g)
+
 /--
 `OmegaReducible` is a value whose type is `omegaFact → desiredFact`.
 An example is `mem_lega'.of_omega n a`, which has type:
@@ -768,6 +785,7 @@ An example is `mem_lega'.of_omega n a`, which has type:
 def proveWithOmega?  {α : Type} [ToMessageData α] [OmegaReducible α] (e : α)
     (bvToNatSimpCtx : Simp.Context) (bvToNatSimprocs : Array Simp.Simprocs)
     (hyps : Array Memory.Hypothesis) : MetaM (Option (Proof α e)) := do
+  -- TODO: refactor to use mkProofGoalForOmega
   let proofFromOmegaVal := (OmegaReducible.reduceToOmega e)
   -- (h : a.toNat + n ≤ 2 ^ 64) → mem_legal' a n
   let proofFromOmegaTy ← inferType (OmegaReducible.reduceToOmega e)
@@ -791,6 +809,7 @@ def proveWithOmega?  {α : Type} [ToMessageData α] [OmegaReducible α] (e : α)
     trace[simp_mem.info]  "{crossEmoji} `omega` failed with error:\n{e.toMessageData}"
     return none
   end ReductionToOmega
+
 
 /--
 simplify the goal state, closing legality, subset, and separation goals,

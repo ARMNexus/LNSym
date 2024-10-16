@@ -392,7 +392,8 @@ partial def SimpMemM.simpifyLoopUnsupervised : SimpMemM Unit := do
     if !everChanged && (← getConfig).failIfUnchanged then
         throwError "{crossEmoji} simp_mem failed to make any progress."
 
-partial def SimpMemM.simplifyLoopSupervisedGo (g : MVarId) (guidance : Guidance) : SimpMemM SimplifyResult := do
+
+partial def SimpMemM.simplifyLoopSupervisedGo (g : MVarId) (guidance : Guidance) : SimpMemM (SimplifyResult × Array MVarId) := do
   withContext g do
   let e := (← getMainTarget).consumeMData
   let e ← instantiateMVars e
@@ -410,9 +411,13 @@ partial def SimpMemM.simplifyLoopSupervisedGo (g : MVarId) (guidance : Guidance)
       withContext g do
         let hyps ← SimpMemM.findMemoryHyps g
         /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
-        let .some subsetProof ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps 
-          | throwError "{crossEmoji} failed to prove {subset}"
-        MemSubsetProof.rewriteReadOfSubsetWrite er ew subsetProof e
+        let (subsetProof, gs) ← do 
+          match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
+          | .some p => pure (p, #[])
+          | .none => do 
+             let (p, g') ← mkProofGoalForOmega subset
+             pure (p, #[g'])
+        return (← MemSubsetProof.rewriteReadOfSubsetWrite er ew subsetProof e, gs)
   | .separateWrite => 
       -- TODO: unify code with other branch.
       let .some ew := WriteBytesExpr.ofExpr? er.mem 
@@ -422,9 +427,13 @@ partial def SimpMemM.simplifyLoopSupervisedGo (g : MVarId) (guidance : Guidance)
         let hyps ← SimpMemM.findMemoryHyps g
         let separate := MemSeparateProp.mk er.span ew.span
         /- TODO: replace the use of throwError with telling the user to prove the goals if enabled. -/
-        let .some separateProof ← proveWithOmega? separate (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps 
-          | throwError "{crossEmoji} failed to  prove {separate}"
-        MemSeparateProof.rewriteReadOfSeparatedWrite er ew separateProof e
+        let (separateProof, gs) ← do
+          match ← proveWithOmega? separate (← getBvToNatSimpCtx) (← getBvToNatSimprocs) hyps with
+          | .some p => pure (p, #[])
+          | .none => 
+            let (p, g') ← mkProofGoalForOmega separate
+            pure (p, #[g'])
+        pure (← MemSeparateProof.rewriteReadOfSeparatedWrite er ew separateProof e, gs)
   | .subsetRead hread? => do
       -- If the user has provided guidance hypotheses, add the user hypothesis to this list.
       -- If the user has not provided guidance hypotheses, then we don't filter the list, so 
@@ -438,32 +447,42 @@ partial def SimpMemM.simplifyLoopSupervisedGo (g : MVarId) (guidance : Guidance)
         |  (.some userHyps, .some readHyp) => .some <| userHyps.push (MemOmega.UserHyp.ofExpr readHyp)
       let g ← withContext g <| MemOmega.mkGoalWithOnlyUserHyps g userHyps?
         let hyps ← SimpMemM.findMemoryHyps g
-        let ⟨hReadEq, hSubsetProof⟩ ← do
-          match hread? with
-          | .none => do 
-            /- User hasn't given us a read, so find a read -/
-            let .some out ← findOverlappingReadHyp hyps er
-              | throwError "{crossEmoji} unable to find overlapping read for {er}"
-            pure out
-          | .some hyp => do
-            /- 
-            User has given us a read, prove that it works.
-            TODO: replace the use of throwError with telling the user to prove the goals if enabled.
-            -/
-            let .some hReadEq := (← ReadBytesEqProof.ofExpr? hyp (← inferType hyp)).get? 0
-              | throwError "{crossEmoji} expected user provided read hypohesis {hyp} to be a read"
-            let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
-            let some subsetProof ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps
-              | throwError "{crossEmoji} unable to prove {subset} for read"
-            pure <|⟨hReadEq, subsetProof⟩
-        MemSubsetProof.rewriteReadOfSubsetRead er hReadEq hSubsetProof e
+        match hread? with
+        | .none => do 
+          /-
+          User hasn't given us a read, so find a read. No recovery possible,
+          Because the expression we want to rewrite into depends on knowing what the read was.
+          -/
+          let .some ⟨hreadEq, proof⟩ ← findOverlappingReadHyp hyps er
+            | throwError "{crossEmoji} unable to find overlapping read for {er}"
+          return (←  MemSubsetProof.rewriteReadOfSubsetRead er hreadEq proof e, #[])
+        | .some hyp => do
+          /- 
+          User has given us a read, prove that it works.
+          TODO: replace the use of throwError with telling the user to prove the goals if enabled.
+          -/
+          let .some hReadEq := (← ReadBytesEqProof.ofExpr? hyp (← inferType hyp)).get? 0
+            | throwError "{crossEmoji} expected user provided read hypohesis {hyp} to be a read"
+          let subset := (MemSubsetProp.mk er.span hReadEq.read.span)
+          match ← proveWithOmega? subset (← getBvToNatSimpCtx) (← getBvToNatSimprocs)  hyps with
+          | .some p => do 
+              let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
+              return (result, #[])
+          | .none => do
+              let (p, g') ← mkProofGoalForOmega subset
+              let result ← MemSubsetProof.rewriteReadOfSubsetRead er hReadEq p e
+              return (result, #[g'])
+              
 
 partial def SimpMemM.simplifyLoopSupervised (g : MVarId) (guidances : Array Guidance) : SimpMemM Unit := do
   let mut g := g
+  let mut sideGoals : Array MVarId := #[]
   for guidance in guidances do
-    let out ← simplifyLoopSupervisedGo g guidance
-    check out.eqProof
-    g ←  g.replaceTargetEq out.eNew out.eqProof
+    let (outProof, newGoals) ← simplifyLoopSupervisedGo g guidance
+    sideGoals := sideGoals.append newGoals
+    check outProof.eqProof
+    g ←  g.replaceTargetEq outProof.eNew outProof.eqProof
+  appendGoals sideGoals.toList
   return ()
 
 /--
