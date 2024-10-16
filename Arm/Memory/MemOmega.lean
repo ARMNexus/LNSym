@@ -152,7 +152,35 @@ def memOmega (g : MVarId) : MemOmegaM Unit := do
         TacticM.withTraceNode' m!"Reducion to omega" do
           try
             TacticM.traceLargeMsg m!"goal (Note: can be large)"  m!"{g}"
-            omega g (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs
+            omega g ((← g.getNondepPropHyps).map Expr.fvar) (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs
+            trace[simp_mem.info] "{checkEmoji} `omega` succeeded."
+          catch e =>
+            trace[simp_mem.info]  "{crossEmoji} `omega` failed with error:\n{e.toMessageData}"
+            throw e
+
+def memOmegaWithHyps (g : MVarId) (rawHyps : Array FVarId) : MemOmegaM Unit := do
+    let g ← mkGoalWithOnlyUserHyps g (← readThe Context).userHyps? 
+    g.withContext do
+      let mut hyps := #[]
+      -- extract out structed values for all hyps.
+      for h in rawHyps do
+        hyps ← hypothesisOfExpr (.fvar h) hyps
+
+      -- only enable pairwise constraints if it is enabled.
+      let isPairwiseEnabled := (← readThe Context).cfg.explodePairwiseSeparate
+      hyps := hyps.filter (!·.isPairwiseSeparate || isPairwiseEnabled)
+
+      -- used specialized procedure that doesn't unfold everything for the easy case.
+      if ← closeMemSideCondition g (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs hyps then
+        return ()
+      else
+        -- in the bad case, just rip through everything.
+        let (_, g) ← Hypothesis.addOmegaFactsOfHyps g hyps.toList #[]
+
+        TacticM.withTraceNode' m!"Reducion to omega" do
+          try
+            TacticM.traceLargeMsg m!"goal (Note: can be large)"  m!"{g}"
+            omega g (← getLCtx).getFVars (← readThe Context).bvToNatSimpCtx (← readThe Context).bvToNatSimprocs
             trace[simp_mem.info] "{checkEmoji} `omega` succeeded."
           catch e =>
             trace[simp_mem.info]  "{crossEmoji} `omega` failed with error:\n{e.toMessageData}"

@@ -281,8 +281,8 @@ def TacticM.traceLargeMsg
 
 
 /-- TacticM's omega invoker -/
-def omega (g : MVarId) (bvToNatSimpCtx : Simp.Context) (bvToNatSimprocs : Array Simp.Simprocs) : MetaM Unit := do
-    BvOmegaBench.run g bvToNatSimpCtx bvToNatSimprocs
+def omega (g : MVarId) (hyps : Array Expr) (bvToNatSimpCtx : Simp.Context) (bvToNatSimprocs : Array Simp.Simprocs) : MetaM Unit := do
+    BvOmegaBench.run g hyps bvToNatSimpCtx bvToNatSimprocs
 
 /-
 Introduce a new definition into the local context, simplify it using `simp`,
@@ -802,7 +802,7 @@ def proveWithOmega?  {α : Type} [ToMessageData α] [OmegaReducible α] (e : α)
   try
     let (_, g) ← Hypothesis.addOmegaFactsOfHyps g hyps.toList #[]
     trace[simp_mem.info] m!"Executing `omega` to close {e}"
-    omega g bvToNatSimpCtx bvToNatSimprocs
+    omega g (← getLocalHyps) bvToNatSimpCtx bvToNatSimprocs
     trace[simp_mem.info] "{checkEmoji} `omega` succeeded."
     return (.some <| Proof.mk (← instantiateMVars factProof))
   catch e =>

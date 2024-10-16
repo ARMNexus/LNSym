@@ -649,8 +649,8 @@ theorem irrelvant_hyps
   simp only [memory_rules]
   conv => 
     lhs
-    simp_mem sep with [h_s0_src_dest_separate]
-  rfl
+    simp_mem sep with [h_s0_src_dest_separate, h_irrelevant]
+  -- rfl
 end SimpMemConv
 
 namespace MathProperties
