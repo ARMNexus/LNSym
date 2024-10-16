@@ -152,7 +152,7 @@ work for `16#64 + ktbl_addr`?
   have hSHA2_k512_length : SHA2.k_512.length = 80 := rfl
   conv =>
     lhs
-    simp_mem sub r at h_s1_ktbl with [] -- It should fail if it makes no progress. Also, make small examples that demonstrate such failures.
+    simp_mem ⊂ r at h_s1_ktbl with [] -- It should fail if it makes no progress. Also, make small examples that demonstrate such failures.
   rfl
 
 /--

@@ -524,8 +524,8 @@ The kind of simplification that must be performed. If we are told
 that we must simplify a separation, a subset, or a read of a write,
 we perform this kind of simplification.
 -/
-syntax guidanceKindSeparate := &"sep" <|> &"⟂"
-syntax guidanceKindSubset := &"sub" <|> &"⊆"-- &"⊂"
+syntax guidanceKindSeparate := &"sep" <|> &"⟂" 
+syntax guidanceKindSubset := &"sub" <|> &"⊂" <|> &"⊆"-- &"⊂"
 syntax guidanceKindSubsetRead := &"r" -- &"⊂"
 syntax guidanceKind := guidanceKindSeparate <|> guidanceKindSubset (guidanceKindSubsetRead ("at" term)?)? 
 
